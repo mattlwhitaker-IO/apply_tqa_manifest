@@ -116,3 +116,21 @@ pub fn delete_manifest_file(wd: &PathBuf) -> Result<(), Box<dyn Error>> {
     fs::remove_file(get_manifest_path(wd))?;
     Ok(())
 }
+
+pub fn parse_args(in_args: &[String]) -> ProcessOptions {
+    let mut op = ProcessOptions::new();
+
+    for s in in_args {
+        match s.as_str() {
+            "-r" => {
+                op.reverse = true;
+            }
+            "-m" => {
+                op.delete_manifest = true;
+            }
+            _ => (),
+        }
+    }
+
+    op
+}
