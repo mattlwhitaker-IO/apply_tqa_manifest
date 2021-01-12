@@ -1,23 +1,23 @@
-use std::fs;
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-const MANIFEST_FILE_NAME: &str = "manifest";
-const MANIFEST_EXT: &str = "txt";
-const MANIFEST_DELIM: &str = "=";
+pub const MANIFEST_FILE_NAME: &str = "manifest";
+pub const MANIFEST_EXT: &str = "txt";
+pub const MANIFEST_DELIM: &str = "=";
 
 #[derive(Debug)]
-pub struct Manifest {
-    pub owl_filename: String,
-    pub orig_filename: String,
+struct Manifest {
+    owl_filename: String,
+    orig_filename: String,
 }
 
 impl Manifest {
-    pub fn rename_owl_to_orig(&self, wd: &PathBuf) {
+    fn rename_owl_to_orig(&self, wd: &PathBuf) {
         let mut owl = PathBuf::from(wd);
         owl.push(self.owl_filename.as_str());
 
@@ -31,7 +31,7 @@ impl Manifest {
         };
     }
 
-    pub fn rename_orig_to_owl(self, wd: &PathBuf) {
+    pub fn rename_orig_to_owl(&self, wd: &PathBuf) {
         let mut owl = PathBuf::from(wd);
         owl.push(self.owl_filename.as_str());
 
@@ -47,21 +47,97 @@ impl Manifest {
 }
 
 #[derive(Debug)]
-pub struct ProcessOptions {
+pub struct ProcessConfig {
+    pub process_path: PathBuf,
     pub reverse: bool,
     pub delete_manifest: bool,
 }
 
-impl ProcessOptions {
-    pub fn new() -> ProcessOptions {
-        ProcessOptions {
+impl ProcessConfig {
+    pub fn new() -> ProcessConfig {
+        ProcessConfig {
+            process_path: PathBuf::new(),
             reverse: false,
             delete_manifest: false,
         }
     }
+
+    pub fn parse_args(in_args: &[String]) -> Result<ProcessConfig, Box<dyn Error>> {
+        let mut op = ProcessConfig::new();
+
+        for s in in_args {
+            match s.as_str() {
+                "-r" => {
+                    op.reverse = true;
+                }
+                "-m" => {
+                    op.delete_manifest = true;
+                }
+                _ => (),
+            }
+        }
+
+        op.process_path = get_path(in_args)?;
+        Ok(op)
+    }
+
+    pub fn run(&self) -> Result<(), String> {
+        //check that the path exists
+        if !self.process_path.exists() {
+            let no_path: String =
+                format!("The path does not exist: {}", self.process_path.display());
+            return Err(no_path);
+        }
+
+        //check that the manifest file exists in the path
+        if !path_contains_manifest(&self.process_path) {
+            let no_manifest = format!(
+                "{} does not contain a file named {}.{}",
+                self.process_path.display(),
+                MANIFEST_FILE_NAME,
+                MANIFEST_EXT
+            );
+            return Err(no_manifest);
+        }
+
+        //read in the manifest file
+        let manifest_text = read_manifest_to_vector(&self.process_path);
+        let manifest_text = match manifest_text {
+            Ok(m_text) => m_text,
+            Err(_error) => {
+                return Err(String::from("Error reading file"));
+            }
+        };
+
+        //process each line of the manifest file
+        for line in manifest_text {
+            let m = split_manifest_string(&line);
+            let m = match m {
+                Ok(manifest) => manifest,
+                Err(_error) => {
+                    return Err(String::from("Error Splitting Line"));
+                }
+            };
+
+            if self.reverse {
+                m.rename_orig_to_owl(&self.process_path);
+            } else {
+                m.rename_owl_to_orig(&self.process_path);
+            }
+        }
+
+        // delete the manifest if required
+        if self.delete_manifest {
+            if let Err(_e) = delete_manifest_file(&self.process_path) {
+                return Err(String::from("Error deleting manifest file."));
+            }
+        }
+
+        Ok(())
+    }
 }
 
-pub fn get_path(in_args: &[String]) -> Result<PathBuf, Box<dyn Error>> {
+fn get_path(in_args: &[String]) -> Result<PathBuf, Box<dyn Error>> {
     let wd = if in_args.len() > 1 {
         match in_args[1].as_str() {
             "-r" => env::current_dir()?,
@@ -74,27 +150,27 @@ pub fn get_path(in_args: &[String]) -> Result<PathBuf, Box<dyn Error>> {
     Ok(wd)
 }
 
-pub fn path_contains_manifest(wd: &PathBuf) -> bool {
+fn path_contains_manifest(wd: &PathBuf) -> bool {
     let manifest_path = get_manifest_path(wd);
 
     manifest_path.exists()
 }
 
-pub fn get_manifest_path(wd: &PathBuf) -> PathBuf {
+fn get_manifest_path(wd: &PathBuf) -> PathBuf {
     let mut manifest_path = PathBuf::from(wd);
     manifest_path.push(MANIFEST_FILE_NAME);
     manifest_path.set_extension(MANIFEST_EXT);
     manifest_path
 }
 
-pub fn read_manifest_to_vector(wd: &PathBuf) -> io::Result<Vec<String>> {
+fn read_manifest_to_vector(wd: &PathBuf) -> io::Result<Vec<String>> {
     let manifest_path = get_manifest_path(wd);
     let file_in = fs::File::open(manifest_path)?;
     let file_reader = BufReader::new(file_in);
     Ok(file_reader.lines().filter_map(io::Result::ok).collect())
 }
 
-pub fn split_manifest_string(manifest_str: &str) -> Result<Manifest, Box<dyn Error>> {
+fn split_manifest_string(manifest_str: &str) -> Result<Manifest, Box<dyn Error>> {
     let split = manifest_str.split(MANIFEST_DELIM);
     let split_vec: Vec<&str> = split.collect();
 
@@ -112,25 +188,7 @@ pub fn split_manifest_string(manifest_str: &str) -> Result<Manifest, Box<dyn Err
     Ok(manifest)
 }
 
-pub fn delete_manifest_file(wd: &PathBuf) -> Result<(), Box<dyn Error>> {
+fn delete_manifest_file(wd: &PathBuf) -> Result<(), Box<dyn Error>> {
     fs::remove_file(get_manifest_path(wd))?;
     Ok(())
-}
-
-pub fn parse_args(in_args: &[String]) -> ProcessOptions {
-    let mut op = ProcessOptions::new();
-
-    for s in in_args {
-        match s.as_str() {
-            "-r" => {
-                op.reverse = true;
-            }
-            "-m" => {
-                op.delete_manifest = true;
-            }
-            _ => (),
-        }
-    }
-
-    op
 }
